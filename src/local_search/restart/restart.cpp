@@ -14,15 +14,15 @@
 #include "../../model_data/Model_Manager.h"
 #include "../../model_data/Model_Var.h"
 #include "../../utils/global_defs.h"
+#include "../../utils/string_utils.h"
 #include "../context/context.h"
 #include "restart.h"
 #include <algorithm>
 #include <cassert>
-#include <cctype>
 #include <cmath>
 #include <cstddef>
-#include <cstdio>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,12 +50,7 @@ void Restart::set_cbk(Restart_Cbk p_restart_cbk, void* p_user_data)
 
 void Restart::set_method(const std::string& p_restart_name)
 {
-  std::string method = p_restart_name;
-  std::transform(method.begin(),
-                 method.end(),
-                 method.begin(),
-                 [](unsigned char ch)
-                 { return static_cast<char>(std::tolower(ch)); });
+  const std::string method = string_utils::to_lower_copy(p_restart_name);
   if (method.empty() || method == "random")
     m_default_strategy = Strategy::random;
   else if (method == "best")
@@ -63,11 +58,8 @@ void Restart::set_method(const std::string& p_restart_name)
   else if (method == "hybrid")
     m_default_strategy = Strategy::hybrid;
   else
-  {
-    printf("c unsupported restart method %s, fallback to random.\n",
-           p_restart_name.c_str());
-    m_default_strategy = Strategy::random;
-  }
+    throw std::invalid_argument("unsupported restart method: " +
+                                p_restart_name);
 }
 
 void Restart::set_restart_step(size_t p_restart_step)

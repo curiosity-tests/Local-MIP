@@ -15,8 +15,8 @@
 #include "../model_data/Model_Con.h"
 #include "../model_data/Model_Manager.h"
 #include "../utils/global_defs.h"
-#include "../utils/solver_error.h"
 #include "context/context.h"
+#include "incumbent_trace.h"
 #include "neighbor/neighbor.h"
 #include "restart/restart.h"
 #include "scoring/scoring.h"
@@ -28,7 +28,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <random>
@@ -67,7 +66,7 @@ private:
 
   bool m_is_keep_feas;
 
-  bool m_strct_feas;
+  bool m_strict_feas;
 
   bool m_break_eq_feas;
 
@@ -94,6 +93,10 @@ private:
   std::vector<size_t> m_con_sat_idxs;
 
   std::vector<size_t> m_con_pos_in_sat_idxs;
+
+  std::vector<size_t> m_dirty_con_idxs;
+
+  std::vector<unsigned char> m_con_activity_is_dirty;
 
   size_t m_activity_period;
 
@@ -132,6 +135,8 @@ private:
   size_t m_bms_random_op;
 
   double m_best_obj;
+
+  Incumbent_Trace m_incumbent_trace;
 
   std::atomic<double> m_logged_obj_value;
 
@@ -198,10 +203,6 @@ private:
 
   inline void delete_sat(size_t p_con_idx);
 
-  inline bool tabu(size_t p_var_idx, double p_delta);
-
-  inline bool tabu_latest(size_t p_var_idx, double p_delta);
-
   double lift_move_operation(size_t p_term_idx, size_t p_var_idx);
 
   inline void update_best_solution();
@@ -224,6 +225,10 @@ private:
 
   void refresh_activities();
 
+  void refresh_dirty_activities();
+
+  inline void mark_activity_dirty(size_t p_con_idx);
+
   template <typename Accumulator>
   void refresh_activities_impl();
 
@@ -231,7 +236,7 @@ private:
   Accumulator compute_activity(const Model_Con& p_con,
                                const double* p_var_values) const;
 
-  template <typename Accumulator>
+  template <typename Accumulator, bool Track_Dirty>
   void update_affected_activities(const Model_Var& p_model_var,
                                   double p_delta);
 
@@ -283,6 +288,13 @@ public:
   bool finalize_result();
 
   void output_result() const;
+
+  void configure_incumbent_trace(bool p_enabled, double p_time_limit);
+
+  void start_incumbent_trace(
+      std::chrono::steady_clock::time_point p_start_time);
+
+  void finish_incumbent_trace();
 
   void write_sol() const;
 
@@ -412,6 +424,15 @@ inline void Local_Search::delete_sat(size_t p_con_idx)
   m_con_pos_in_sat_idxs[p_con_idx] = SIZE_MAX;
 }
 
+inline void Local_Search::mark_activity_dirty(size_t p_con_idx)
+{
+  if (m_con_activity_is_dirty[p_con_idx])
+    return;
+  m_con_activity_is_dirty[p_con_idx] = 1;
+  m_dirty_con_idxs.push_back(p_con_idx);
+  m_activity_dirty = true;
+}
+
 inline void Local_Search::update_best_solution()
 {
   assert(m_var_best_value.size() == m_var_num);
@@ -428,10 +449,10 @@ inline void Local_Search::update_best_solution()
 
 inline void Local_Search::publish_best_obj()
 {
-  m_logged_obj_value.store(
-      m_model_manager->is_min() *
-          (m_best_obj + m_model_manager->obj_offset()),
-      std::memory_order_relaxed);
+  const double objective = m_model_manager->is_min() *
+                           (m_best_obj + m_model_manager->obj_offset());
+  m_logged_obj_value.store(objective, std::memory_order_relaxed);
+  m_incumbent_trace.record(objective);
 }
 
 inline double Local_Search::get_obj_value() const
@@ -465,52 +486,4 @@ inline void Local_Search::reset_op(bool p_require_positive)
   m_best_var_idx = SIZE_MAX;
   m_best_delta = 0;
   m_best_age = SIZE_MAX;
-}
-
-inline bool
-Local_Search::explore_neighbor(std::vector<Neighbor>& p_explore_neighbors)
-{
-  assert(!p_explore_neighbors.empty());
-  bool validate_selected_move = m_scoring.has_neighbor_callback();
-  reset_op(true);
-  for (auto& neighbor : p_explore_neighbors)
-  {
-    m_op_var_deltas.clear();
-    m_op_var_idxs.clear();
-    m_op_size = 0;
-    if (&neighbor == &p_explore_neighbors.back())
-    {
-      reset_op(false);
-      m_weight.update(m_weight_ctx);
-    }
-    neighbor.explore(m_neighbor_ctx);
-    const bool user_defined = neighbor.is_user_defined();
-    if (user_defined)
-    {
-      validate_selected_move = true;
-      if (m_op_size > m_op_var_idxs.size() ||
-          m_op_size > m_op_var_deltas.size())
-      {
-        throw Solver_Error(
-            "neighbor callback returned inconsistent operation arrays");
-      }
-    }
-    else
-      assert(m_op_size <= m_op_var_idxs.size() &&
-             m_op_size <= m_op_var_deltas.size());
-    for (size_t op_idx = 0; op_idx < m_op_size; ++op_idx)
-    {
-      if (user_defined && m_op_var_idxs[op_idx] >= m_var_num)
-      {
-        throw Solver_Error(
-            "neighbor callback variable index is out of range: " +
-            std::to_string(m_op_var_idxs[op_idx]));
-      }
-      m_scoring.score_neighbor(
-          m_scoring_ctx, m_op_var_idxs[op_idx], m_op_var_deltas[op_idx]);
-    }
-    if (m_best_neighbor_score > 0)
-      break;
-  }
-  return validate_selected_move;
 }

@@ -52,10 +52,6 @@ private:
 
   bool m_cancel_timeout;
 
-  std::thread m_obj_log_thread;
-
-  std::atomic<bool> m_stop_obj_log;
-
   std::atomic<bool> m_user_termination_requested;
 
   bool m_log_obj_enabled;
@@ -71,13 +67,9 @@ private:
 
   void request_timeout_stop();
 
+  void stop_timeout_thread();
+
   void timeout_handler();
-
-  void start_obj_logger();
-
-  void stop_obj_logger();
-
-  void obj_log_handler();
 
   double elapsed_seconds() const;
 

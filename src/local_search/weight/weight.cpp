@@ -12,14 +12,11 @@
 =====================================================================================*/
 
 #include "../../model_data/Model_Manager.h"
+#include "../../utils/string_utils.h"
 #include "../context/context.h"
 #include "weight.h"
-#include <algorithm>
-#include <cctype>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,26 +42,23 @@ void Weight::set_cbk(Weight_Cbk p_weight_cbk, void* p_user_data)
 
 void Weight::set_method(const std::string& p_method_name)
 {
-  std::string method = p_method_name;
-  std::transform(method.begin(),
-                 method.end(),
-                 method.begin(),
-                 [](unsigned char ch)
-                 { return static_cast<char>(std::tolower(ch)); });
+  const std::string method = string_utils::to_lower_copy(p_method_name);
   if (method.empty() || method == "smooth")
     m_default_method = Method::smooth;
   else if (method == "monotone")
     m_default_method = Method::monotone;
   else
-  {
-    printf("c unsupported weight method %s, fallback to smooth.\n",
-           p_method_name.c_str());
-    m_default_method = Method::smooth;
-  }
+    throw std::invalid_argument("unsupported weight method: " +
+                                p_method_name);
 }
 
 void Weight::set_smooth_probability(size_t p_weight_smooth_prob)
 {
+  if (p_weight_smooth_prob > k_probability_scale)
+  {
+    throw std::invalid_argument(
+        "weight smooth probability must be in [0, 10000]");
+  }
   m_smooth_prob = p_weight_smooth_prob;
 }
 
@@ -88,29 +82,25 @@ void Weight::update(Weight_Ctx& p_ctx) const
 
 void Weight::smooth_update(Weight_Ctx& p_ctx) const
 {
-  if (p_ctx.m_rng() % 10000 > m_smooth_prob)
+  std::uniform_int_distribution<size_t> dist(0, k_probability_scale - 1);
+  if (dist(p_ctx.m_rng) >= m_smooth_prob)
   {
-    for (size_t con_idx : p_ctx.m_shared.m_con_unsat_idxs)
-      p_ctx.m_con_weight[con_idx]++;
-    if (p_ctx.m_shared.m_is_found_feasible &&
-        p_ctx.m_shared.m_con_unsat_idxs.empty())
-      p_ctx.m_con_weight[0]++;
+    monotone_update(p_ctx);
+    return;
   }
-  else
+
+  const size_t con_num = p_ctx.m_shared.m_model_manager.con_num();
+  for (size_t con_idx = 1; con_idx < con_num; ++con_idx)
   {
-    size_t con_num = p_ctx.m_shared.m_model_manager.con_num();
-    for (size_t con_idx = 1; con_idx < con_num; ++con_idx)
-    {
-      bool is_sat =
-          p_ctx.m_shared.m_con_pos_in_unsat_idxs[con_idx] == SIZE_MAX;
-      if (is_sat && p_ctx.m_con_weight[con_idx] > 0)
-        p_ctx.m_con_weight[con_idx]--;
-    }
-    if (p_ctx.m_shared.m_is_found_feasible &&
-        p_ctx.m_shared.m_current_obj_breakthrough &&
-        p_ctx.m_con_weight[0] > 0)
-      p_ctx.m_con_weight[0]--;
+    const bool is_sat =
+        p_ctx.m_shared.m_con_pos_in_unsat_idxs[con_idx] == SIZE_MAX;
+    if (is_sat && p_ctx.m_con_weight[con_idx] > 0)
+      p_ctx.m_con_weight[con_idx]--;
   }
+  if (p_ctx.m_shared.m_is_found_feasible &&
+      p_ctx.m_shared.m_current_obj_breakthrough &&
+      p_ctx.m_con_weight[0] > 0)
+    p_ctx.m_con_weight[0]--;
 }
 
 void Weight::monotone_update(Weight_Ctx& p_ctx) const

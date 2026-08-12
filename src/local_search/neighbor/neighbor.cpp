@@ -12,16 +12,15 @@
 =====================================================================================*/
 
 #include "../../utils/global_defs.h"
+#include "../../utils/string_utils.h"
 #include "../context/context.h"
 #include "neighbor.h"
-#include <algorithm>
 #include <cassert>
-#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -47,8 +46,7 @@ void Neighbor::Neighbor_Ctx::clear_ops()
 void Neighbor::Neighbor_Ctx::set_single_op(size_t p_var_idx,
                                            double p_delta)
 {
-  m_op_var_idxs.clear();
-  m_op_var_deltas.clear();
+  clear_ops();
   m_op_var_idxs.push_back(p_var_idx);
   m_op_var_deltas.push_back(p_delta);
   m_op_size = 1;
@@ -67,12 +65,7 @@ Neighbor::Neighbor(const std::string& p_neighbor_name,
     : m_neighbor_cbk(nullptr), m_user_data(nullptr), m_bms_con(p_bms_con),
       m_bms_op(p_bms_op)
 {
-  std::string method = p_neighbor_name;
-  std::transform(method.begin(),
-                 method.end(),
-                 method.begin(),
-                 [](unsigned char ch)
-                 { return static_cast<char>(std::tolower(ch)); });
+  const std::string method = string_utils::to_lower_copy(p_neighbor_name);
   if (method.empty() || method == "unsat_mtm_bm")
     m_strategy = Strategy::unsat_mtm_bm;
   else if (method == "sat_mtm")
@@ -84,11 +77,8 @@ Neighbor::Neighbor(const std::string& p_neighbor_name,
   else if (method == "unsat_mtm_bm_random")
     m_strategy = Strategy::unsat_mtm_bm_random;
   else
-  {
-    printf("c unsupported neighbor method %s, fallback to unsat_mtm_bm.\n",
-           p_neighbor_name.c_str());
-    m_strategy = Strategy::unsat_mtm_bm;
-  }
+    throw std::invalid_argument("unsupported neighbor method: " +
+                                p_neighbor_name);
 }
 
 Neighbor::Neighbor(const std::string& p_neighbor_name,
