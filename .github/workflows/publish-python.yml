@@ -69,6 +69,7 @@ jobs:
           path: dist/*.whl
 
   publish:
+    if: false   # racecar: scan/report job, not a build
     name: Publish to PyPI
     needs:
       - build_sdist
